@@ -97,16 +97,32 @@ else
   #   strangenesses to occur.
 
 
+  # Helper functions
+  ___prompt_right_aligned() {
+    local escseq='('$'\x01''?'$'\e''([@A-Z\[\\^_]|\])[0-9:;<=>?]*[-!"#$%&()*,./'"'"']*([@A-Z\[\\^_`a-z{|}~]|\]))'$'\x02''?'
+    local str="$( echo "${1@P}" | sed -E "s/$escseq//g" )"
+    local width="${#str}"
+    local cols="$( [[ "$COLUMNS" ]] && echo "$COLUMNS" || tput cols )"
+    printf "%$((cols-width))s"'%s' "" "$1"
+  }
+
+
   # Set Prompt
-  declare TimeStamp="${HYellow}"'$(r=$? ; date +"[%Y-%m-%dT%H:%M:%S%:z]" ; exit $r)'"${HReset}"
+  declare TimeStamp="${HYellow}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
+  declare RetCode="${HRed}"'$(r=$? ; [[ "$r" == "0" ]] || echo "$r" ; exit $r)'"${HReset}"
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
   declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
   declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
   declare UserHost="${UserColor}"'\u@\h'"${HReset}"
-  declare PWDFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
-  Variables+=( TimeStamp BeatTime ShellLevel ExitCode UserColor UserHost PWDFolder )
-  PS1="${BeatTime}${UserHost}:${PWDFolder}${ShellLevel}\\$ "
+  declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
+  declare Pwd="${HBlue}"'\w'"${HReset}"
+  Variables+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
+  PS1='\n'
+  PS1+='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)\r'
+  PS1+="${UserHost}:${Pwd}${ShellLevel}"'\n'
+  PS1+='\$ '
+  #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}\\$ "
 
 
   # Set titlebar
@@ -127,27 +143,29 @@ else
 
 
   # Set Right Prompt
-  eval '
-  ___prompt_right() {
-    local r="$?" ; [[ "$r" == "0" ]] && r="" || r="${r} "
-    #local timestamp="$(date +"%Y-%m-%d %H:%M:%S %:z")"
-    #local rprompt='"'${Red}'"'"${r}"'"'${Yellow}'"'"${timestamp}"'"'${Reset}'"'
-    #local rprompt_nocolor="${r}${timestamp}"
-    local rprompt='"'${Red}'"'"${r}"'"'${Blue}'"'"${PWD}"'"'${Reset}'"'
-    local rprompt_nocolor="${r}${PWD}"
-    local cursor_save="\\e[s"  move_right="\\e[${COLUMNS:-$(tput cols)}C"
-    local cursor_load="\\e[u"  move_left="\\e[$(( ${#rprompt_nocolor} - 1 ))D"
-    printf "${cursor_save}${move_right}${move_left}${rprompt}${cursor_load}"
-  }'
-  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzx "___prompt_right"; then
-    PROMPT_COMMAND+=( "___prompt_right" )
+  if false; then
+    eval '
+    ___prompt_right() {
+      local r="$?" ; [[ "$r" == "0" ]] && r="" || r="${r} "
+      #local timestamp="$(date +"%Y-%m-%d %H:%M:%S %:z")"
+      #local rprompt='"'${Red}'"'"${r}"'"'${Yellow}'"'"${timestamp}"'"'${Reset}'"'
+      #local rprompt_nocolor="${r}${timestamp}"
+      local rprompt='"'${Red}'"'"${r}"'"'${Blue}'"'"${PWD}"'"'${Reset}'"'
+      local rprompt_nocolor="${r}${PWD}"
+      local cursor_save="\\e[s"  move_right="\\e[${COLUMNS:-$(tput cols)}C"
+      local cursor_load="\\e[u"  move_left="\\e[$(( ${#rprompt_nocolor} - 1 ))D"
+      printf "${cursor_save}${move_right}${move_left}${rprompt}${cursor_load}"
+    }'
+    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzx "___prompt_right"; then
+      PROMPT_COMMAND+=( "___prompt_right" )
+    fi
   fi
 
 
   # Define a prompt deactivation function
   eval '
   ___prompt_deactivate() {
-    PS1='\''\u@\h:\w$ '\''
+    PS1='\''\u@\h:\w\$ '\''
     printf '"'${CmdTitle}${USER}@${HOSTNAME}${CmdStop}'"'
     local cmd cmds=( "${PROMPT_COMMAND[@]}" ) ; PROMPT_COMMAND=()
     for cmd in "${cmds[@]}"; do
@@ -155,6 +173,7 @@ else
     done
     unset -f ___prompt_title
     unset -f ___prompt_right
+    unset -f ___prompt_right_aligned
     unset -f "$FUNCNAME"
   }'
   # Deleting the DEBUG trap cannot be done inside a function
