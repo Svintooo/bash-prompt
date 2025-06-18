@@ -12,8 +12,8 @@ if false; then
   eval "$(oh-my-posh init bash --config $HOME/.cache/oh-my-posh/themes/peru.omp.json)"
 
 
-# Default Prompt (requires bash >= 5.2)
-elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2) )); then
+# Default Prompt
+else
 
 
   # Array of variables to be unset at script end
@@ -21,13 +21,6 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare -a PostCommands=()
   declare -a RuntimeDeclares=()
   declare -a ScriptDeclares=( ScriptDeclares RuntimeDeclares PostCommands PreCommands )
-
-
-  # Make sure PROMPT_COMMAND is an array
-  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" != "declare -a"* ]]; then
-    declare -a PROMPT_COMMAND=( "$PROMPT_COMMAND" )
-    [[ -n "${PROMPT_COMMAND[0]}" ]] || PROMPT_COMMAND=()
-  fi
 
 
   # Define control codes
@@ -58,28 +51,12 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
       Black    Red      Green      Brown  Blue      Purple      Cyan      Grey
       DarkGrey LightRed LightGreen Yellow LightBlue LightPurple LightCyan White
     )
-    for color in "${colors[@]}" ; do
+    for color in "${colors[@]}"; do
       declare "H${color}"="${HideStart}${!color}${HideEnd}"  # declare hidden version of each color
       ScriptDeclares+=( "${color}" "H${color}" )
     done
     unset color colors
   fi
-
-  # TODOS
-  #
-  # - Fixa så exec time visas om man kör multipla kommandon separerat med semikolon.
-  #   Ex: sleep 4;false
-  #
-  # - Lista ut bättre sätt att få DEBUG trap att endast trigga för user commands.
-  # - Ändra tillbaka PROMPT_COMMAND till en sträng (inte en array),
-  #   Ha endast en function i den: ___prompt_command,
-  #   ___prompt_command ser alltid till att PROMPT_COMMAND innehåller endast sig själv,
-  #   om något annat är i PROMPT_COMMAND så flyttas den koden in i ___prompt_command
-  #   och PROMPT_COMMAND återställs,
-  #   ___prompt_command sätter en flagga som checkas av DEBUG trap.
-  #   På deta sätt kan jag trigga så kod endast körs för user commands.
-  #
-  # - Flytta modifiera PROMPT_COMMAND till array till slutet av koden.
 
   # NOTES
   #
@@ -105,7 +82,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
 
 
   # Helper functions
-  ___prompt_right_aligned() {
+  function ___prompt_right_aligned() {
     local escseq='('$'\x01''?'$'\e''([@A-Z\[\\^_]|\])[0-9:;<=>?]*[-!"#$%&()*,./'"'"']*([@A-Z\[\\^_`a-z{|}~]|\]))'$'\x02''?'
     local str_no_escseq="$( echo "${1@P}" | sed -E "s/$escseq//g" )"
     local width="${#str_no_escseq}"
@@ -120,24 +97,26 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   }
 
   eval '
-  ___prompt_title() {
+  function ___prompt_title() {
     echo -ne '"'${CmdTitle}'"'
     # IMPORTANT: Prevent printing eventual control codes inside BASH_COMMAND
     echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
     echo -ne '"'${CmdStop}'"'
   }'
 
-  ___prompt_pre_cmd() {
-    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$BASH_COMMAND"; then
-      # THIS CODE RUNS BEFORE EACH USER COMMAND
-      ___prompt_layout="full"
+  #NOTE: Will not run if you only press enter on an empty prompt
+  function ___prompt_pre_cmd() {
+    # Switch between single line and multiline prompt
+    ___prompt_layout="full"
+
+    # Execution time
+    if [[ -z "$___prompt_cmdtime_start" ]]; then
       ___prompt_cmdtime_start="$EPOCHSECONDS"
-      # THIS CODE RUNS BEFORE EACH USER COMMAND
     fi
   }
 
-  ___prompt_post_cmd() {
-    # THIS CODE RUNS AFTER EACH USER COMMAND
+  function ___prompt_post_cmd() {
+    # Switch between single line and multiline prompt
     case "$___prompt_layout" in
       (minimal)
         PS1="${___prompt_PS1##*\\n}" ;;
@@ -145,14 +124,16 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
         PS1="$___prompt_PS1" ;;
     esac
     ___prompt_layout="minimal"
+
+    # Execution time
     if [[ "$___prompt_cmdtime_start" =~ ^[0-9]+$ && "$EPOCHSECONDS" =~ ^[0-9]+$ ]]; then
       ___cmdtime_elapsed="$(( EPOCHSECONDS - ___prompt_cmdtime_start - 62167219200 ))"
       ___cmdtime_elapsed="$( date -ud "@${___cmdtime_elapsed}" +'%y %j %H %M %S' )"
       ___cmdtime_elapsed="$( awk '{print " "$1-0"y "$2-1"d "$3-0"h "$4-0"m "$5-0"s"}' <<<"$___cmdtime_elapsed" )"
       ___cmdtime_elapsed="${___cmdtime_elapsed// 0?/}"
       ___cmdtime_elapsed="${___cmdtime_elapsed#${___cmdtime_elapsed%% *}}"
+      ___prompt_cmdtime_start=""
     fi
-    # THIS CODE RUNS AFTER EACH USER COMMAND
   }
 
   PreCommands+=( ___prompt_pre_cmd )
@@ -173,8 +154,8 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare UserHost="${HLightCyan}"'\u@\h'"${HReset}"
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HCyan}"'\w'"${HReset}"
-  ScriptDeclares+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
-  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${CmdDuration} ${TimeStamp}"'" ;exit $r)'
+  ScriptDeclares+=( TimeStamp RetCode NoNewline BeatTime ShellLevel ExitCode GitBranch CmdDuration UserColor UserHost PwdFolder Pwd )
+  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode}${CmdDuration} ${TimeStamp}"'" ;exit $r)'
   PS1+="${UserHost}:${Pwd}"'\n'
   PS1+="${GitBranch}${UserColor}"'\$'"${HReset}${ShellLevel} "
   #
@@ -194,10 +175,49 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   fi
 
 
+  # Post: Custom PROMPT_COMMAND handler
+  declare -a ___prompt_PROMPT_COMMAND=( "${PROMPT_COMMAND[@]}" )
+  unset PROMPT_COMMAND
+  declare PROMPT_COMMAND="___prompt_commands"
+  function ___prompt_commands() {
+    local cmd prompt_command
 
-  # Define a prompt deactivation function
+    # Restore modified PROMPT_COMMAND if it was modified
+    if [[ "${PROMPT_COMMAND[*]}" != "$FUNCNAME" ]]; then
+      for cmd in "${PROMPT_COMMAND[@]}"; do
+        prompt_command="$( sed -E "s/;\s*$FUNCNAME\s*;/;/g ; s/^\s*;+\s*|\s*;+\s*$//g" <<<";$cmd;" )"
+        if [[ -n "$prompt_command" ]] && ! printf '%s\0' "${___prompt_PROMPT_COMMAND[@]}" | grep -qzxF "$prompt_command"; then
+          ___prompt_PROMPT_COMMAND+=( "$prompt_command" )
+        fi
+      done
+      unset PROMPT_COMMAND
+      declare -g PROMPT_COMMAND="$FUNCNAME"
+    fi
+
+    # Run prompt commands
+    for cmd in "${___prompt_PROMPT_COMMAND[@]}"; do
+      eval "$cmd"
+    done
+  }
+  RuntimeDeclares+=( ___prompt_commands ___prompt_PROMPT_COMMAND )
+
+
+  # Post: PostCommands
+  for cmd in "${PostCommands[@]}"; do
+    if ! printf '%s\0' "${___prompt_PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
+      ___prompt_PROMPT_COMMAND+=( "$cmd" )
+    fi
+  done
+  unset cmd
+
+
+  # Post: PreCommands
+  trap 'if [[ "$BASH_COMMAND" != "___prompt_commands" ]]; then '"$( IFS=';' ; echo "${PreCommands[*]}" )"'; fi' DEBUG
+
+
+  # Post: Define a prompt deactivation function
   eval '
-  ___prompt_deactivate() {
+  function ___prompt_deactivate() {
     # Set Prompt
     PS1='\''\u@\h:\w\$ '\''
 
@@ -208,12 +228,13 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
 
     # Remove Prompt Commands
     local cmd cmds=()
-    for cmd in "${PROMPT_COMMAND[@]}"; do
+    for cmd in "${___prompt_PROMPT_COMMAND[@]}"; do
       if ! printf '"'%s\0'"' '"${RuntimeDeclares[@]@Q}"' | grep -qzxF "$cmd"; then
         cmds+=( "$cmd" )
       fi
     done
-    PROMPT_COMMAND=( "${cmds[@]}" )
+    unset PROMPT_COMMAND
+    PROMPT_COMMAND="$( IFS=";" ; echo "${cmds[*]}" )"
 
     # Unset variables and functions
     '"$( printf 'unset %s\n    ' "${RuntimeDeclares[@]}" )"'
@@ -223,17 +244,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   alias ___prompt_deactivate='trap - DEBUG ; unalias ___prompt_deactivate ; ___prompt_deactivate'
 
 
-  # Post
-  for cmd in "${PostCommands[@]}"; do
-    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
-      PROMPT_COMMAND+=( "$cmd" )
-    fi
-  done
-  unset cmd
-  trap "$( IFS=';' ; echo "${PreCommands[*]}" )" DEBUG
-
-
-  # Cleanup
+  # Post: Cleanup
   unset "${ScriptDeclares[@]}"
 
 
