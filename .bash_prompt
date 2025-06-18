@@ -20,7 +20,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare -a PreCommands=()
   declare -a PostCommands=()
   declare -a RuntimeDeclares=()
-  declare -a ScriptDeclares=( ScriptDeclares RuntimeDeclares PreCommands PostCommands )
+  declare -a ScriptDeclares=( ScriptDeclares RuntimeDeclares PostCommands PreCommands )
 
 
   # Make sure PROMPT_COMMAND is an array
@@ -87,10 +87,6 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   #     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
   #              (( var + 1 ))
   #              cat HACKED.TXT
-  #
-  # - Adding a right aligned prompt in Bash is a hack and will always behave
-  #   strangely. The prompt in this script tries to only let tolerable
-  #   strangenesses to occur.
 
 
   # Helper functions
@@ -128,7 +124,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     # THIS CODE RUNS AFTER EACH USER COMMAND
     case "$___prompt_layout" in
       (minimal)
-        PS1="${___prompt_PS1##*\n}" ;;
+        PS1="${___prompt_PS1##*\\n}" ;;
       (full|*)
         PS1="$___prompt_PS1" ;;
     esac
@@ -136,8 +132,8 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     # THIS CODE RUNS AFTER EACH USER COMMAND
   }
 
-  PreCommands+=( "___prompt_pre_cmd" )
-  PostCommands+=( "___prompt_post_cmd" )
+  PreCommands+=( ___prompt_pre_cmd )
+  PostCommands+=( ___prompt_post_cmd )
   RuntimeDeclares+=( ___prompt_right_aligned ___prompt_title ___prompt_pre_cmd ___prompt_post_cmd ___prompt_layout ___prompt_PS1 )
 
 
@@ -148,14 +144,15 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
   declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
+  declare GitBranch='$(r=$? ; git symbolic-ref --short HEAD 2>/dev/null | sed "/./s/.*/[&]/" ; exit $r)'
   declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
-  declare UserHost="${UserColor}"'\u@\h'"${HReset}"
+  declare UserHost="${HLightCyan}"'\u@\h'"${HReset}"
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
-  declare Pwd="${HBlue}"'\w'"${HReset}"
+  declare Pwd="${HCyan}"'\w'"${HReset}"
   ScriptDeclares+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
   PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)'
-  PS1+="${UserHost}:${Pwd}${ShellLevel}"'\n'
-  PS1+='\$ '
+  PS1+="${UserHost}:${Pwd}"'\n'
+  PS1+="${GitBranch}${UserColor}"'\$'"${HReset}${ShellLevel} "
   #
   #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}\\$ "
   #
@@ -165,31 +162,13 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   # Set titlebar
   if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
     # Set default title
-    PS1="${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}""${PS1}"
+    PS1="${PS1}""${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}"
     ___prompt_PS1="$PS1"
 
     # Set title to the command being executed
-    PreCommands+=( "___prompt_title" )
+    PreCommands+=( ___prompt_title )
   fi
 
-
-  # Set Right Prompt
-  if false; then
-    eval '
-    ___prompt_right() {
-      local r="$?" ; [[ "$r" == "0" ]] && r="" || r="${r} "
-      #local timestamp="$(date +"%Y-%m-%d %H:%M:%S %:z")"
-      #local rprompt='"'${Red}'"'"${r}"'"'${Yellow}'"'"${timestamp}"'"'${Reset}'"'
-      #local rprompt_nocolor="${r}${timestamp}"
-      local rprompt='"'${Red}'"'"${r}"'"'${Blue}'"'"${PWD}"'"'${Reset}'"'
-      local rprompt_nocolor="${r}${PWD}"
-      local cursor_save="\\e[s"  move_right="\\e[${COLUMNS:-$(tput cols)}C"
-      local cursor_load="\\e[u"  move_left="\\e[$(( ${#rprompt_nocolor} - 1 ))D"
-      printf "${cursor_save}${move_right}${move_left}${rprompt}${cursor_load}"
-    }'
-    PostCommands+=( "___prompt_right" )
-    RuntimeDeclares+=( ___prompt_right )
-  fi
 
 
   # Define a prompt deactivation function
@@ -221,13 +200,13 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
 
 
   # Post
-  trap "$( IFS=';' ; echo "${PreCommands[*]}" )" DEBUG
   for cmd in "${PostCommands[@]}"; do
     if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
       PROMPT_COMMAND+=( "$cmd" )
     fi
   done
   unset cmd
+  trap "$( IFS=';' ; echo "${PreCommands[*]}" )" DEBUG
 
 
   # Cleanup
