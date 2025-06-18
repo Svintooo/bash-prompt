@@ -18,10 +18,21 @@ else
 
   # NOTES
   #
+  # - This file must be able to be sourced multiple times without anything
+  #   breaking.
+  #     Test: source ~/.bash_prompt ; source ~/.bash_prompt
+  #
   # - Any code $(...) run inside PS1 needs to preserve exit code $?.
   #   Example: $(r=$? ; ... ; exit $r)
   #     Test: ( exit 1 )
   #           echo "This should be 1: $?"
+  #
+  # - Any code run inside PROMPT_COMMAND needs to preserve BASH_REMATCH.
+  #   Regex comparison like [[ asdf =~ sd ]] will modify BASH_REMATCH for
+  #   the user. Make sure it is restored using something like
+  #   `local m="$BASH_REMATCH"` and `BASH_REMATCH="$m"`.
+  #     Test: [[ asdf =~ sd ]]
+  #           echo "$BASH_REMATCH"
   #
   # - Prevent executing malicious code. Never do integer operations on
   #   user controlled variables.
@@ -47,7 +58,9 @@ else
 
 
   # Store all current shell variable/function names
-  declare shell_vars=""
+  [[ -n "${PROMPT_COMMAND+x}" ]] || PROMPT_COMMAND=""
+  [[ -n "${BASH_REMATCH+x}"   ]] || BASH_REMATCH=""
+  declare shell_vars=""  #NOTE: shell_vars lines are separated so variable is included when running compgen
   shell_vars="$( compgen -v ; compgen -A function )"
 
 
@@ -120,8 +133,8 @@ else
 
   # Return cursor position
   # NOTE: function code is encapsulated using () instead of {}.
-  #       This is done to run teh code in a subshell.
-  #       This is a precausion since I do not know if `exec < /dev/tty` would break the bash instance in any way.
+  #       This is done to run the code in a subshell.
+  #       This is a precausion since I do not know if `exec < /dev/tty` would break your bash instance in any way.
   function ___prompt__cursor_position() (
     local oldstty
     local -a pos
@@ -149,7 +162,7 @@ else
   declare NoNewline='$(r=$?; col="$(___prompt__cursor_position)" ; [[ "$col" == 0 ]] || echo '"'\n${HYellow}(no trailing newline)${HReset}\n\n'"' ;exit $r)'
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
-  declare GitBranch='$(r=$? ; git symbolic-ref --short HEAD 2>/dev/null | sed "s/.*/[&]/" ; exit $r)'
+  declare GitBranch='$(r=$? ; { git symbolic-ref --short HEAD || git describe --always; } 2>/dev/null | sed "s/.*/[&]/" ; exit $r)'
   declare CmdDuration='$(r=$? ; [[ "$___prompt_cmdtime_elapsed" =~ ^0?$ ]] || echo "'"${HYellow}"'${___prompt_cmdtime_elapsed}'"${HReset}"'" ; exit $r)'
   declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
   declare PromptSign="${UserColor}"'\$'"${HReset}"
@@ -230,6 +243,7 @@ else
     }
 
     function ___prompt_postcmd__execution_time() {
+      local m="$BASH_REMATCH"
       if [[ "$___prompt_cmdtime_start" =~ ^[0-9]+$ && "$EPOCHSECONDS" =~ ^[0-9]+$ ]]; then
         local elapsed
         local sec_since_year_zero="62167219200"  # Seconds between year 0 and epoch
@@ -241,6 +255,7 @@ else
         ___prompt_cmdtime_elapsed="$elapsed"
         ___prompt_cmdtime_start=""
       fi
+      BASH_REMATCH="$m"  # Prevent BASH_REMATCH to be modified by =~
     }
 
     PreCommands+=( ___prompt_precmd__execution_time )
@@ -256,9 +271,12 @@ else
 
   # Declare custom PROMPT_COMMAND handling code
   # NOTE: This is needed to hinder PreCommands to be run for each PostCommand.
-  declare -a ___prompt_PROMPT_COMMAND=( "${PROMPT_COMMAND[@]}" )
-  unset PROMPT_COMMAND
-  declare PROMPT_COMMAND="___prompt_commands"
+
+  if ! declare -p ___prompt_PROMPT_COMMAND 2>/dev/null | grep -q '^declare -a'; then
+    declare -a ___prompt_PROMPT_COMMAND=( "${PROMPT_COMMAND[@]}" )
+    unset PROMPT_COMMAND
+    declare PROMPT_COMMAND="___prompt_commands"
+  fi
 
   function ___prompt_commands() {
     local cmd prompt_command
@@ -272,6 +290,7 @@ else
           ___prompt_PROMPT_COMMAND+=( "$prompt_command" )
         fi
       done
+
       unset PROMPT_COMMAND
       declare -g PROMPT_COMMAND="$FUNCNAME"
     fi
@@ -355,7 +374,7 @@ else
   unset RuntimeDeclares
 
 
-  # Print error if we forgot to unset any variables
+  # Print error if we forgot to unset any variables or functions
   if [[ -n "$shell_vars" ]]; then
     echo >&2 "$shell_vars"
     echo >&2 "${BASH_SOURCE[0]}: ERROR: Above temporary variables/functions was never unset"
