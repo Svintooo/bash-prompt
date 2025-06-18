@@ -3,65 +3,91 @@
 #
 
 
-# Custom Prompt
+# Table of Content
+#  A. INFORMATION
+#  B. USAGE
+#  C. NOTES
+#  0. External Prompt
+#  1. Prompt Init
+#  2. Prompt Config   <--- Add your code here
+#  3. Prompt Post
+
+
+# INFORMATION
+#
+# Configure your bash prompt in this file and source it from ~/.bashrc.
+#
+# Either enable an external prompt handler in section 0, or code your own prompt in section 2.
+#
+# Section 1 and 3 should not need any modifications. They set up boilerplate code to make it easier to create
+# and manage your prompt.
+
+
+# USAGE
+#
+# In section 2 your goal is to modify the following variables:
+# - PS1: put your prompt string here.
+# - PreCommands: Add to this array all code you want to run before each user command.
+# - PostCommands: Add to this array all code you want to run before each prompt is printed (after each user command).
+# - RuntimeDeclares: Add to this array the names of all variables/functions you create that is needed for your prompt to function.
+# - ScriptDeclares: Add to this array the names of all temporary variables/functions you want to unset at script end.
+#
+# Follow above instructions correctly and the boilerplate code in section 1 and 3 will take care of the rest.
+
+
+# NOTES
+#
+# - This file must be able to be sourced multiple times without anything
+#   breaking.
+#     Test: source ~/.bash_prompt ; source ~/.bash_prompt
+#
+# - Any code $(...) run inside PS1 needs to preserve exit code $?.
+#   Example: $(r=$? ; ... ; exit $r)
+#     Test: ( exit 59 )
+#           echo "This should be 59: $?"
+#
+# - Any code run inside PostCommands (PROMPT_COMMAND) needs to preserve BASH_REMATCH.
+#   Regex comparison like [[ asdf =~ sd ]] will modify BASH_REMATCH for
+#   the user. Make sure it is restored using something like
+#   `local m="$BASH_REMATCH"` and `BASH_REMATCH="$m"`.
+#     Test: [[ "qwerty" =~ ert ]]
+#           echo "This should be 'ert': $BASH_REMATCH"
+#
+# - Prevent executing malicious code. Never do integer operations on user controlled variables.
+#     Dangerous: (( var += 1 )), $(( var - 1 )), [[ "$var" -eq 1 ]] 
+#     Safe:      [[ "$var" == 1 ]], [[ "$var" > 0 ]], [[ -z "$var" ]]
+#     Example: var='PATH=0'
+#              (( var + 1 ))
+#              echo "$PATH"
+#     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
+#              (( var + 1 ))
+#              cat HACKED.TXT
+
+
+
 if false; then
 
+  # 0. External Prompt --------------------------------------------------------------------------------------
 
-  # Cleanup default prompt and enable custom prompt
+
+  # Cleanup any configured prompt and enable external prompt
   declare -F ___prompt_deactivate >/dev/null && ___prompt_deactivate
   eval "$(oh-my-posh init bash --config $HOME/.cache/oh-my-posh/themes/peru.omp.json)"
 
 
-# Default Prompt
+  # 0. External Prompt END ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 else
 
-
-  # NOTES
-  #
-  # - This file must be able to be sourced multiple times without anything
-  #   breaking.
-  #     Test: source ~/.bash_prompt ; source ~/.bash_prompt
-  #
-  # - Any code $(...) run inside PS1 needs to preserve exit code $?.
-  #   Example: $(r=$? ; ... ; exit $r)
-  #     Test: ( exit 1 )
-  #           echo "This should be 1: $?"
-  #
-  # - Any code run inside PROMPT_COMMAND needs to preserve BASH_REMATCH.
-  #   Regex comparison like [[ asdf =~ sd ]] will modify BASH_REMATCH for
-  #   the user. Make sure it is restored using something like
-  #   `local m="$BASH_REMATCH"` and `BASH_REMATCH="$m"`.
-  #     Test: [[ asdf =~ sd ]]
-  #           echo "$BASH_REMATCH"
-  #
-  # - Prevent executing malicious code. Never do integer operations on
-  #   user controlled variables.
-  #     Dangerous: (( var += 1 )), $(( var - 1 )), [[ "$var" -eq 1 ]] 
-  #     Safe:      [[ "$var" == 1 ]], [[ "$var" > 0 ]], [[ -z "$var" ]]
-  #     Example: var='PATH=0'
-  #              (( var + 1 ))
-  #              echo "$PATH"
-  #     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
-  #              (( var + 1 ))
-  #              cat HACKED.TXT
-
-
-  # Table of Content
-  #  1. Init
-  #  2. Prompt
-  #  3. Post
-
-
-  #
-  # 1. Init - Set up everything you need to define your prompt
-  #
+  # 1. Prompt Init ------------------------------------------------------------------------------------------
 
 
   # Store all current shell variable/function names
-  [[ -n "${PROMPT_COMMAND+x}" ]] || PROMPT_COMMAND=""
-  [[ -n "${BASH_REMATCH+x}"   ]] || BASH_REMATCH=""
-  declare shell_vars=""  #NOTE: shell_vars lines are separated so variable is included when running compgen
-  shell_vars="$( compgen -v ; compgen -A function )"
+  [[ -n "${PROMPT_COMMAND+x}" ]] || PROMPT_COMMAND=""  # Make sure standard PROMPT_COMMAND variable exist
+  [[ -n "${BASH_REMATCH+x}"   ]] || BASH_REMATCH=""    # Make sure standard BASH_REMATCH variable exist
+  function list_vars_and_funcs() { compgen -v ; compgen -A function; }  # Helper func
+  declare shell_vars=""                  #NOTE: Variable shell_vars are set up on two lines so the variable is
+  shell_vars="$( list_vars_and_funcs )"  #      included when running list_vars_and_funcs().
 
 
   # Define arrays
@@ -69,6 +95,13 @@ else
   declare -a PostCommands=()
   declare -a RuntimeDeclares=()
   declare -a ScriptDeclares=( PostCommands PreCommands )
+
+
+  # 1. Prompt Init END ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+  # 2. Prompt Config ----------------------------------------------------------------------------------------
 
 
   # Define control codes
@@ -134,7 +167,7 @@ else
   # Return cursor position
   # NOTE: function code is encapsulated using () instead of {}.
   #       This is done to run the code in a subshell.
-  #       This is a precausion since I do not know if `exec < /dev/tty` would break your bash instance in any way.
+  #       This is a precausion since I do not know if `exec < /dev/tty` could break the interactive bash shell in any way.
   function ___prompt__cursor_position() (
     local oldstty
     local -a pos
@@ -151,15 +184,10 @@ else
   RuntimeDeclares+=( ___prompt__cursor_position )
 
 
-  #
-  # 2. Prompt - Code your prompt here
-  #
-
-
-  # Declare your prompt modules
+  # Declare prompt modules
   declare TimeStamp="${HLightCyan}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
   declare RetCode="${HRed}"'$(r=$? ; [[ "$r" == "0" ]] || echo "$r" ; exit $r)'"${HReset}"
-  declare NoNewline='$(r=$?; col="$(___prompt__cursor_position)" ; [[ "$col" == 0 ]] || echo '"'\n${HYellow}(no trailing newline)${HReset}\n\n'"' ;exit $r)'
+  declare WarnNoNewline='$(r=$?; col="$(___prompt__cursor_position)" ; [[ "$col" == 0 ]] || echo '"'\n${HYellow}(no trailing newline)${HReset}\n\n'"' ;exit $r)'
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
   declare GitBranch='$(r=$? ; { git symbolic-ref --short HEAD || git describe --always; } 2>/dev/null | sed "s/.*/[&]/" ; exit $r)'
@@ -169,32 +197,34 @@ else
   declare UserHost="${HLightCyan}"'\u@\h'"${HReset}"
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/#$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HCyan}"'\w'"${HReset}"
-  ScriptDeclares+=( TimeStamp RetCode NoNewline BeatTime ShellLevel GitBranch CmdDuration UserColor PromptSign UserHost PwdFolder Pwd )
+  ScriptDeclares+=( TimeStamp RetCode WarnNoNewline BeatTime ShellLevel GitBranch CmdDuration UserColor PromptSign UserHost PwdFolder Pwd )
 
 
-  # Create your prompt using your modules
+  # Create prompt using the modules
 
   # My singleline prompt
   #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}"'\$ '
 
   # My multiline prompt
   PS1=""
-  PS1+="${NoNewline}"
+  PS1+="${WarnNoNewline}"
   PS1+='$(r=$? ; (exit $r) ; ___prompt_right_aligned "'"${RetCode} ${CmdDuration} ${TimeStamp}"'" ; exit $r)'
   PS1+="${UserHost}:${Pwd}"'\n'
   PS1+="${GitBranch}${PromptSign}${ShellLevel} "
 
 
-  # Dynamically update the text in your terminal titlebar
+  # Dynamically update the text in the terminal titlebar
   if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
     # Add escape codes to the prompt that sets the title
+    # NOTE: Appended at end of PS1 instead of beginning of PS1 to be
+    #       compatible with mini_prompt_on_empty_cmd further below.
     PS1="${PS1}${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}"
 
     # Set title to the user command being executed
     if true; then
       eval '
       function ___prompt_precmd__set_title_to_BASH_COMMAND() {
-        # Note that any eventual escape codes in $BASH_COMMAND are replaced by "^?"
+        # Precausion: Any eventual escape codes in $BASH_COMMAND are replaced by "^?"
         printf '"'${CmdTitle}"'%s'"${CmdStop}'"' "${BASH_COMMAND//[[:cntrl:]]/^?}"
       }'
 
@@ -255,7 +285,7 @@ else
         ___prompt_cmdtime_elapsed="$elapsed"
         ___prompt_cmdtime_start=""
       fi
-      BASH_REMATCH="$m"  # Prevent BASH_REMATCH to be modified by =~
+      BASH_REMATCH="$m"  # Prevent BASH_REMATCH to be modified by the =~ in this function
     }
 
     PreCommands+=( ___prompt_precmd__execution_time )
@@ -264,9 +294,11 @@ else
   fi
 
 
-  #
-  # 3. Post - Activate your prompt, clean up variables that are no longer used
-  #
+  # 2. Prompt Config END ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+  # 3. Prompt Post ------------------------------------------------------------------------------------------
 
 
   # Declare custom PROMPT_COMMAND handling code
@@ -366,7 +398,7 @@ else
   }'
 
   # Chaining the function to an alias with the same name, since deleting the DEBUG trap
-  # must be done outside the function.
+  # must be done outside any functions.
   alias ___prompt_deactivate='trap - DEBUG ; unalias ___prompt_deactivate ; ___prompt_deactivate'
 
   RuntimeDeclares+=( ___prompt_deactivate )
@@ -375,7 +407,7 @@ else
   # Cleanup
   unset "${ScriptDeclares[@]}"
   unset ScriptDeclares
-  shell_vars="$( diff <(echo "$shell_vars") <(compgen -v ; compgen -A function) | sed -E '/^[^<>]|RuntimeDeclares/d' | grep -vF ${RuntimeDeclares[@]/#/-e } )"
+  shell_vars="$( diff <(echo "$shell_vars") <(list_vars_and_funcs) | sed -E '/^[^<>]|RuntimeDeclares/d' | grep -vF ${RuntimeDeclares[@]/#/-e } )"
   unset RuntimeDeclares
 
 
@@ -384,7 +416,8 @@ else
     echo >&2 "$shell_vars"
     echo >&2 "${BASH_SOURCE[0]}: ERROR: Above temporary variables/functions was never unset"
   fi
-  unset shell_vars
+  unset shell_vars list_vars_and_funcs
 
 
+  # 3. Prompt Post END ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 fi
