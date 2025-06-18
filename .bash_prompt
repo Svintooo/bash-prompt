@@ -17,9 +17,10 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
 
 
   # Array of variables to be unset at script end
-  declare -a PromptCommands=()
-  declare -a DebugTraps=()
-  declare -a Variables=( Variables PromptCommands DebugTraps )
+  declare -a PreCommands=()
+  declare -a PostCommands=()
+  declare -a RuntimeDeclares=()
+  declare -a ScriptDeclares=( ScriptDeclares RuntimeDeclares PreCommands PostCommands )
 
 
   # Make sure PROMPT_COMMAND is an array
@@ -39,7 +40,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare OSCPromptStart="${Esc}]133;A${CmdStop}"      #TODO /etc/profile.d/vte-2.91.sh
   declare OSCPromptEnd="${Esc}]133;B${CmdStop}"        #TODO /etc/profile.d/vte-2.91.sh
   declare OSCReportRetval="${Esc}]133;D\$?${CmdStop}"  #TODO /etc/profile.d/vte-2.91.sh
-  Variables+=( Esc CursorSave CursorRestore HideStart HideEnd CmdStop CmdTitle OSCPromptStart OSCPromptEnd OSCReportRetval )
+  ScriptDeclares+=( Esc CursorSave CursorRestore HideStart HideEnd CmdStop CmdTitle OSCPromptStart OSCPromptEnd OSCReportRetval )
 
   if [[ "$TERM" =~ ^xterm-color$|.*-256color$ ]]; then
     declare  Reset="${Esc}[0;00m"
@@ -59,7 +60,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     )
     for color in "${colors[@]}" ; do
       declare "H${color}"="${HideStart}${!color}${HideEnd}"  # declare hidden version of each color
-      Variables+=( "${color}" "H${color}" )
+      ScriptDeclares+=( "${color}" "H${color}" )
     done
     unset color colors
   fi
@@ -107,23 +108,37 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     fi
   }
 
-  ___prompt_set_cmd_ran() {
-    if [[ -z "$___prompt_PS1" ]]; then
-      return 0
-    elif [[ "$1" == "DEBUG" ]] && ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$BASH_COMMAND"; then
-      PS1="$___prompt_PS1"
-      ___prompt_cmd_ran="true"
-    elif [[ "$1" != "DEBUG" ]]; then
-      [[ -n "$___prompt_cmd_ran" ]] && unset -v ___prompt_cmd_ran || PS1="${___prompt_PS1##*\n}"
+  eval '
+  ___prompt_title() {
+    echo -ne '"'${CmdTitle}'"'
+    # IMPORTANT: Prevent printing eventual control codes inside BASH_COMMAND
+    echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
+    echo -ne '"'${CmdStop}'"'
+  }'
+
+  ___prompt_pre_cmd() {
+    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$BASH_COMMAND"; then
+      # THIS CODE RUNS BEFORE EACH USER COMMAND
+      ___prompt_layout="full"
+      # THIS CODE RUNS BEFORE EACH USER COMMAND
     fi
   }
 
-  trap '___prompt_set_cmd_ran DEBUG;'  DEBUG
-  DebugTraps+=( "___prompt_set_cmd_ran DEBUG" )
-  PromptCommands+=( "___prompt_set_cmd_ran" )
-  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF '___prompt_set_cmd_ran'; then
-    PROMPT_COMMAND+=( "___prompt_set_cmd_ran" )
-  fi
+  ___prompt_post_cmd() {
+    # THIS CODE RUNS AFTER EACH USER COMMAND
+    case "$___prompt_layout" in
+      (minimal)
+        PS1="${___prompt_PS1##*\n}" ;;
+      (full|*)
+        PS1="$___prompt_PS1" ;;
+    esac
+    ___prompt_layout="minimal"
+    # THIS CODE RUNS AFTER EACH USER COMMAND
+  }
+
+  PreCommands+=( "___prompt_pre_cmd" )
+  PostCommands+=( "___prompt_post_cmd" )
+  RuntimeDeclares+=( ___prompt_right_aligned ___prompt_title ___prompt_pre_cmd ___prompt_post_cmd ___prompt_layout ___prompt_PS1 )
 
 
   # Set Prompt
@@ -137,29 +152,24 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
   declare UserHost="${UserColor}"'\u@\h'"${HReset}"
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HBlue}"'\w'"${HReset}"
-  Variables+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
+  ScriptDeclares+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
   PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)'
   PS1+="${UserHost}:${Pwd}${ShellLevel}"'\n'
   PS1+='\$ '
-  ___prompt_PS1="$PS1"
   #
   #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}\\$ "
+  #
+  ___prompt_PS1="$PS1"
 
 
   # Set titlebar
   if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
     # Set default title
-    PS1="${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}${PS1}"
+    PS1="${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}""${PS1}"
+    ___prompt_PS1="$PS1"
 
     # Set title to the command being executed
-    # IMPORTANT: Prevent printing eventual control codes inside BASH_COMMAND
-    eval '
-    ___prompt_title() {
-      echo -ne '"'${CmdTitle}'"'
-      echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
-      echo -ne '"'${CmdStop}'"'
-    }'
-    #trap "___prompt_title" DEBUG
+    PreCommands+=( "___prompt_title" )
   fi
 
 
@@ -177,40 +187,51 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
       local cursor_load="\\e[u"  move_left="\\e[$(( ${#rprompt_nocolor} - 1 ))D"
       printf "${cursor_save}${move_right}${move_left}${rprompt}${cursor_load}"
     }'
-    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzx "___prompt_right"; then
-      PROMPT_COMMAND+=( "___prompt_right" )
-    fi
+    PostCommands+=( "___prompt_right" )
+    RuntimeDeclares+=( ___prompt_right )
   fi
 
 
   # Define a prompt deactivation function
   eval '
   ___prompt_deactivate() {
+    # Set Prompt
     PS1='\''\u@\h:\w\$ '\''
-    printf '"'${CmdTitle}${USER}@${HOSTNAME}${CmdStop}'"'
-    local cmd cmds=( "${PROMPT_COMMAND[@]}" ) ; PROMPT_COMMAND=()
-    for cmd in "${cmds[@]}"; do
-      [[ "$cmd" == "___prompt_right" ]] || PROMPT_COMMAND+=( "$cmd" )
+
+    # Set Title
+    if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
+      printf '"'${CmdTitle}${USER}@${HOSTNAME}${CmdStop}'"'
+    fi
+
+    # Remove Prompt Commands
+    local cmd cmds=()
+    for cmd in "${PROMPT_COMMAND[@]}"; do
+      if ! printf '"'%s\0'"' '"${RuntimeDeclares[@]@Q}"' | grep -qzxF "$cmd"; then
+        cmds+=( "$cmd" )
+      fi
     done
-    unset -v ___prompt_PS1
-    unset -f ___prompt_set_cmd_ran
-    unset -f ___prompt_title
-    unset -f ___prompt_right
-    unset -f ___prompt_right_aligned
+    PROMPT_COMMAND=( "${cmds[@]}" )
+
+    # Unset variables and functions
+    '"$( printf 'unset %s\n    ' "${RuntimeDeclares[@]}" )"'
     unset -f "$FUNCNAME"
   }'
   # Deleting the DEBUG trap cannot be done inside a function
   alias ___prompt_deactivate='trap - DEBUG ; unalias ___prompt_deactivate ; ___prompt_deactivate'
 
 
+  # Post
+  trap "$( IFS=';' ; echo "${PreCommands[*]}" )" DEBUG
+  for cmd in "${PostCommands[@]}"; do
+    if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
+      PROMPT_COMMAND+=( "$cmd" )
+    fi
+  done
+  unset cmd
+
+
   # Cleanup
-  #trap "$(IFS=';' ; echo "${DebugTraps[*]}")" DEBUG
-  #for cmd in "${PromptCommands[@]}"; do
-  #  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
-  #    PROMPT_COMMAND+=( "$cmd" )
-  #  fi
-  #done
-  unset cmd "${Variables[@]}"
+  unset "${ScriptDeclares[@]}"
 
 
 fi
