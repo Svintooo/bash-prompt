@@ -7,7 +7,7 @@ user@server.com:~/files$ █
 ```
 
 ```
-user@server.com:~                   2025-06-18 19:52:47 +02:00
+user@server.com:~                                             2025-06-18 19:52:47 +02:00
 $ █
 ```
 
