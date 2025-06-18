@@ -65,6 +65,21 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     unset color colors
   fi
 
+  # TODOS
+  #
+  # - Fixa så exec time visas om man kör multipla kommandon separerat med semikolon.
+  #   Ex: sleep 4;false
+  #
+  # - Lista ut bättre sätt att få DEBUG trap att endast trigga för user commands.
+  # - Ändra tillbaka PROMPT_COMMAND till en sträng (inte en array),
+  #   Ha endast en function i den: ___prompt_command,
+  #   ___prompt_command ser alltid till att PROMPT_COMMAND innehåller endast sig själv,
+  #   om något annat är i PROMPT_COMMAND så flyttas den koden in i ___prompt_command
+  #   och PROMPT_COMMAND återställs,
+  #   ___prompt_command sätter en flagga som checkas av DEBUG trap.
+  #   På deta sätt kan jag trigga så kod endast körs för user commands.
+  #
+  # - Flytta modifiera PROMPT_COMMAND till array till slutet av koden.
 
   # NOTES
   #
@@ -116,6 +131,7 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
     if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$BASH_COMMAND"; then
       # THIS CODE RUNS BEFORE EACH USER COMMAND
       ___prompt_layout="full"
+      ___prompt_cmdtime_start="$EPOCHSECONDS"
       # THIS CODE RUNS BEFORE EACH USER COMMAND
     fi
   }
@@ -129,6 +145,13 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
         PS1="$___prompt_PS1" ;;
     esac
     ___prompt_layout="minimal"
+    if [[ "$___prompt_cmdtime_start" =~ ^[0-9]+$ && "$EPOCHSECONDS" =~ ^[0-9]+$ ]]; then
+      ___cmdtime_elapsed="$(( EPOCHSECONDS - ___prompt_cmdtime_start - 62167219200 ))"
+      ___cmdtime_elapsed="$( date -ud "@${___cmdtime_elapsed}" +'%y %j %H %M %S' )"
+      ___cmdtime_elapsed="$( awk '{print " "$1-0"y "$2-1"d "$3-0"h "$4-0"m "$5-0"s"}' <<<"$___cmdtime_elapsed" )"
+      ___cmdtime_elapsed="${___cmdtime_elapsed// 0?/}"
+      ___cmdtime_elapsed="${___cmdtime_elapsed#${___cmdtime_elapsed%% *}}"
+    fi
     # THIS CODE RUNS AFTER EACH USER COMMAND
   }
 
@@ -138,19 +161,20 @@ elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2)
 
 
   # Set Prompt
-  declare TimeStamp="${HYellow}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
+  declare TimeStamp="${HLightCyan}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
   declare RetCode="${HRed}"'$(r=$? ; [[ "$r" == "0" ]] || echo "$r" ; exit $r)'"${HReset}"
   declare NoNewline='$(r=$?; printf "\033[6n" > /dev/tty ; IFS=";" read -r -d"R" _ col < /dev/tty ;  ;exit $r)' #WiP
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
   declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
   declare GitBranch='$(r=$? ; git symbolic-ref --short HEAD 2>/dev/null | sed "/./s/.*/[&]/" ; exit $r)'
+  declare CmdDuration='$(r=$? ; [[ "$___cmdtime_elapsed" =~ ^0?$ ]] || echo "'"${HYellow}"'${___cmdtime_elapsed}'"${HReset}"'" ; exit $r)'
   declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
   declare UserHost="${HLightCyan}"'\u@\h'"${HReset}"
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HCyan}"'\w'"${HReset}"
   ScriptDeclares+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
-  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)'
+  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${CmdDuration} ${TimeStamp}"'" ;exit $r)'
   PS1+="${UserHost}:${Pwd}"'\n'
   PS1+="${GitBranch}${UserColor}"'\$'"${HReset}${ShellLevel} "
   #
