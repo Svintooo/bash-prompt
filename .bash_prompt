@@ -16,11 +16,57 @@ if false; then
 else
 
 
-  # Array of variables to be unset at script end
+  # NOTES
+  #
+  # - Any code $(...) run inside PS1 needs to preserve exit code $?.
+  #   Example: $(r=$? ; ... ; exit $r)
+  #     Test: ( exit 1 )
+  #           echo "This should be 1: $?"
+  #
+  # - Running code before and after each user command is tricky.
+  #   - DEBUG trap can be created to run code before a user command.
+  #       `trap 'code goes here' DEBUG`
+  #   - PROMPT_COMMAND is an env var which code will run after each user command.
+  #       `PROMPT_COMMAND='code goes here'`
+  #   CAVEATS:
+  #   - Only PROMPT_COMMAND (no DEBUG trap) will run if user press enter on an
+  #     empty prompt (with no command to run).
+  #   - A DEBUG trap will also execute for each command in PROMPT_COMMAND.
+  #   Special hacks are needed to make sure code is only run before and after
+  #   each user command.
+  #
+  # - Resetting cursor position using carriage return (\r) is bad.
+  #   It risks hiding command outputs that do not end with a newline (\n).
+  #     Test: echo -n 'this should be visible'
+  #
+  # - Prevent executing malicious code. Never do integer operations on
+  #   user controlled variables.
+  #     Dangerous: (( var += 1 )), $(( var - 1 )), [[ "$var" -eq 1 ]] 
+  #     Safe:      [[ "$var" == 1 ]], [[ "$var" > 0 ]], [[ -z "$var" ]]
+  #     Example: var='PATH=0'
+  #              (( var + 1 ))
+  #              echo "$PATH"
+  #     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
+  #              (( var + 1 ))
+  #              cat HACKED.TXT
+
+
+  # Table of Content
+  #  1. Init
+  #  2. Prompt (your code goes here)
+  #  3. Post
+
+
+  #
+  # 1. Init - Set up everything you need to define your prompt
+  #
+
+
+  # Define arrays
   declare -a PreCommands=()
   declare -a PostCommands=()
   declare -a RuntimeDeclares=()
-  declare -a ScriptDeclares=( ScriptDeclares RuntimeDeclares PostCommands PreCommands )
+  declare -a ScriptDeclares=( RuntimeDeclares PostCommands PreCommands )
 
 
   # Define control codes
@@ -35,6 +81,9 @@ else
   declare OSCReportRetval="${Esc}]133;D\$?${CmdStop}"  #TODO /etc/profile.d/vte-2.91.sh
   ScriptDeclares+=( Esc CursorSave CursorRestore HideStart HideEnd CmdStop CmdTitle OSCPromptStart OSCPromptEnd OSCReportRetval )
 
+
+  # Define color control codes
+  # NOTE: These are deliberately left undeclared if the terminal does not support colors
   if [[ "$TERM" =~ ^xterm-color$|.*-256color$ ]]; then
     declare  Reset="${Esc}[0;00m"
     declare  Black="${Esc}[0;30m"    DarkGrey="${Esc}[1;30m"
@@ -58,37 +107,18 @@ else
     unset color colors
   fi
 
-  # NOTES
-  #
-  # - Any code $(...) run inside PS1 needs to preserve exit code $?.
-  #   Example: $(r=$? ; ... ; exit $r)
-  #     Test: ( exit 1 )
-  #           echo "This should be 1: $?"
-  #
-  # - Resetting cursor position using carriage return (\r) is bad.
-  #   It risks hiding command outputs that do not end with a newline (\n).
-  #     Test: echo -n 'this should be visible'
-  #
-  # - Prevent executing malicious code. Never do integer operations on
-  #   user controlled variables.
-  #     Dangerous: (( var += 1 )), $(( var - 1 )), [[ "$var" -eq 1 ]] 
-  #     Safe:      [[ "$var" == 1 ]], [[ "$var" > 0 ]], [[ -z "$var" ]]
-  #     Example: var='PATH=0'
-  #              (( var + 1 ))
-  #              echo "$PATH"
-  #     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
-  #              (( var + 1 ))
-  #              cat HACKED.TXT
 
+  # Define helper functions
 
-  # Helper functions
+  # Takes a string and prints it at the far right in the terminal area
   function ___prompt_right_aligned() {
     local escseq='('$'\x01''?'$'\e''([@A-Z\[\\^_]|\])[0-9:;<=>?]*[-!"#$%&()*,./'"'"']*([@A-Z\[\\^_`a-z{|}~]|\]))'$'\x02''?'
     local str_no_escseq="$( echo "${1@P}" | sed -E "s/$escseq//g" )"
     local width="${#str_no_escseq}"
-    local cols="$( [[ "$COLUMNS" ]] && echo "$COLUMNS" || tput cols )"
+    local cols="$( [[ "$COLUMNS" ]] && echo "$COLUMNS" || tput cols )" #TODO: Make this test only run once when function is defined
     local cursor_save="\\e[s"  move_right="\\e[${cols}C"
     local cursor_load="\\e[u"  move_left="\\e[$((width-1))D"
+    #TODO: Make this if-clause only run once when this function is defined
     if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
       printf "${cursor_save}${move_right}${move_left}%s${cursor_load}" "$1"
     else
@@ -96,93 +126,129 @@ else
     fi
   }
 
-  eval '
-  function ___prompt_title() {
-    echo -ne '"'${CmdTitle}'"'
-    # IMPORTANT: Prevent printing eventual control codes inside BASH_COMMAND
-    echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
-    echo -ne '"'${CmdStop}'"'
-  }'
-
-  #NOTE: Will not run if you only press enter on an empty prompt
-  function ___prompt_pre_cmd() {
-    # Switch between single line and multiline prompt
-    ___prompt_layout="full"
-
-    # Execution time
-    if [[ -z "$___prompt_cmdtime_start" ]]; then
-      ___prompt_cmdtime_start="$EPOCHSECONDS"
-    fi
-  }
-
-  function ___prompt_post_cmd() {
-    # Switch between single line and multiline prompt
-    case "$___prompt_layout" in
-      (minimal)
-        PS1="${___prompt_PS1##*\\n}" ;;
-      (full|*)
-        PS1="$___prompt_PS1" ;;
-    esac
-    ___prompt_layout="minimal"
-
-    # Execution time
-    if [[ "$___prompt_cmdtime_start" =~ ^[0-9]+$ && "$EPOCHSECONDS" =~ ^[0-9]+$ ]]; then
-      ___cmdtime_elapsed="$(( EPOCHSECONDS - ___prompt_cmdtime_start - 62167219200 ))"
-      ___cmdtime_elapsed="$( date -ud "@${___cmdtime_elapsed}" +'%y %j %H %M %S' )"
-      ___cmdtime_elapsed="$( awk '{print " "$1-0"y "$2-1"d "$3-0"h "$4-0"m "$5-0"s"}' <<<"$___cmdtime_elapsed" )"
-      ___cmdtime_elapsed="${___cmdtime_elapsed// 0?/}"
-      ___cmdtime_elapsed="${___cmdtime_elapsed#${___cmdtime_elapsed%% *}}"
-      ___prompt_cmdtime_start=""
-    fi
-  }
-
-  PreCommands+=( ___prompt_pre_cmd )
-  PostCommands+=( ___prompt_post_cmd )
-  RuntimeDeclares+=( ___prompt_right_aligned ___prompt_title ___prompt_pre_cmd ___prompt_post_cmd ___prompt_layout ___prompt_PS1 )
+  RuntimeDeclares+=( ___prompt_right_aligned )
 
 
-  # Set Prompt
+  #
+  # 2. Prompt - Code your prompt here
+  #
+
+
+  # Declare your prompt modules
   declare TimeStamp="${HLightCyan}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
   declare RetCode="${HRed}"'$(r=$? ; [[ "$r" == "0" ]] || echo "$r" ; exit $r)'"${HReset}"
   declare NoNewline='$(r=$?; printf "\033[6n" > /dev/tty ; IFS=";" read -r -d"R" _ col < /dev/tty ;  ;exit $r)' #WiP
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
-  declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
-  declare GitBranch='$(r=$? ; git symbolic-ref --short HEAD 2>/dev/null | sed "/./s/.*/[&]/" ; exit $r)'
-  declare CmdDuration='$(r=$? ; [[ "$___cmdtime_elapsed" =~ ^0?$ ]] || echo "'"${HYellow}"'${___cmdtime_elapsed}'"${HReset}"'" ; exit $r)'
+  declare GitBranch='$(r=$? ; git symbolic-ref --short HEAD 2>/dev/null | sed "s/.*/[&]/" ; exit $r)'
+  declare CmdDuration='$(r=$? ; [[ "$___prompt_cmdtime_elapsed" =~ ^0?$ ]] || echo "'"${HYellow}"'${___prompt_cmdtime_elapsed}'"${HReset}"'" ; exit $r)'
   declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
+  declare PromptSign="${UserColor}"'\$'"${HReset}"
   declare UserHost="${HLightCyan}"'\u@\h'"${HReset}"
-  declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
+  declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/#$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HCyan}"'\w'"${HReset}"
-  ScriptDeclares+=( TimeStamp RetCode NoNewline BeatTime ShellLevel ExitCode GitBranch CmdDuration UserColor UserHost PwdFolder Pwd )
-  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode}${CmdDuration} ${TimeStamp}"'" ;exit $r)'
+  ScriptDeclares+=( TimeStamp RetCode NoNewline BeatTime ShellLevel GitBranch CmdDuration UserColor UserHost PwdFolder Pwd )
+
+
+  # Create your prompt using your modules
+
+  # My singleline prompt
+  #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}"'\$ '
+
+  # My multiline prompt
+  PS1='$(r=$? ; (exit $r) ; ___prompt_right_aligned "'"${RetCode} ${CmdDuration} ${TimeStamp}"'" ; exit $r)'
   PS1+="${UserHost}:${Pwd}"'\n'
-  PS1+="${GitBranch}${UserColor}"'\$'"${HReset}${ShellLevel} "
-  #
-  #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}\\$ "
-  #
-  ___prompt_PS1="$PS1"
+  PS1+="${GitBranch}${PromptSign}${ShellLevel} "
 
 
-  # Set titlebar
+  # Dynamically update the text in your terminal titlebar
   if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
-    # Set default title
-    PS1="${PS1}""${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}"
-    ___prompt_PS1="$PS1"
+    # Add to prompt: setting the title
+    PS1="${PS1}${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}"
 
-    # Set title to the command being executed
-    PreCommands+=( ___prompt_title )
+    # When user runs a command: Set title to the command being executed
+    if true; then
+      eval '
+      function ___prompt_precmd_set_title_to_BASH_COMMAND() {
+        # Note that any control codes in $BASH_COMMAND are replaced by "^?"
+        printf '"'${CmdTitle}"'%s'"${CmdStop}'"' "${BASH_COMMAND//[[:cntrl:]]/^?}"
+      }'
+
+      PreCommands+=( ___prompt_precmd_set_title_to_BASH_COMMAND )
+      RuntimeDeclares+=( ___prompt_precmd_set_title_to_BASH_COMMAND )
+    fi
   fi
 
 
-  # Post: Custom PROMPT_COMMAND handler
+  # Switch between multi-line and single-line prompt depending if user ran a command or not
+  if true; then
+    function ___prompt_precmd_set_PS1_layout_to_full() {
+      ___prompt_layout="full"
+    }
+
+    function ___prompt_postcmd_modify_PS1_layout() {
+      case "$___prompt_layout" in
+        (minimal)
+          PS1="${___prompt_PS1##*\\n}" ;;  # Print only last line of PS1
+        (full|*)
+          PS1="$___prompt_PS1"         ;;  # Print full PS1
+      esac
+
+      ___prompt_layout="minimal"
+    }
+
+    ___prompt_PS1="$PS1"
+    PreCommands+=( ___prompt_precmd_set_PS1_layout_to_full )
+    PostCommands+=( ___prompt_postcmd_modify_PS1_layout )
+    RuntimeDeclares+=( ___prompt_precmd_set_PS1_layout_to_full ___prompt_postcmd_modify_PS1_layout ___prompt_layout ___prompt_PS1 )
+  fi
+
+
+  # Calculate Execution time (generate string for variable ___prompt_cmdtime_elapsed)
+  # NOTE: Variable ___prompt_cmdtime_start is reset and checked to support when user runs multiple
+  #       commands at once (ex: echo 1 | sed 's/1/2/' ; echo "hello" ).
+  if true; then
+    function ___prompt_precmd__set_cmdtime_start() {
+      if [[ -z "$___prompt_cmdtime_start" ]]; then
+        ___prompt_cmdtime_start="$EPOCHSECONDS"
+      fi
+    }
+
+    function ___prompt_postcmd_set_cmdtime_elapsed() {
+      if [[ "$___prompt_cmdtime_start" =~ ^[0-9]+$ && "$EPOCHSECONDS" =~ ^[0-9]+$ ]]; then
+        local elapsed
+        local sec_since_year_zero="62167219200"  # Seconds between year 0 and epoch
+        elapsed="$(( EPOCHSECONDS - ___prompt_cmdtime_start - sec_since_year_zero ))"
+        elapsed="$( date -ud "@${elapsed}" +'%y %j %H %M %S' )"
+        elapsed="$( awk '{print " "$1-0"y "$2-1"d "$3-0"h "$4-0"m "$5-0"s"}' <<<"$elapsed" )"
+        elapsed="${elapsed// 0?/}"
+        elapsed="${elapsed# ${elapsed%% *}}"
+        ___prompt_cmdtime_elapsed="$elapsed"
+        ___prompt_cmdtime_start=""
+      fi
+    }
+
+    PreCommands+=( ___prompt_precmd__set_cmdtime_start )
+    PostCommands+=( ___prompt_postcmd_set_cmdtime_elapsed )
+    RuntimeDeclares+=( ___prompt_pre_cmd ___prompt_post_cmd ___prompt_cmdtime_start ___prompt_cmdtime_elapsed )
+  fi
+
+
+  #
+  # 3. Post - Activates your prompt, cleans up variables that are no longer used
+  #
+
+
+  # Declare a custom PROMPT_COMMAND handler
+  # NOTE: This is needed to hinder PreCommands to be run after each PostCommand.
   declare -a ___prompt_PROMPT_COMMAND=( "${PROMPT_COMMAND[@]}" )
   unset PROMPT_COMMAND
   declare PROMPT_COMMAND="___prompt_commands"
   function ___prompt_commands() {
     local cmd prompt_command
 
-    # Restore modified PROMPT_COMMAND if it was modified
+    # Restore PROMPT_COMMAND if it was modified
+    # Also adds any new commands in PROMPT_COMMAND to ___prompt_PROMPT_COMMAND
     if [[ "${PROMPT_COMMAND[*]}" != "$FUNCNAME" ]]; then
       for cmd in "${PROMPT_COMMAND[@]}"; do
         prompt_command="$( sed -E "s/;\s*$FUNCNAME\s*;/;/g ; s/^\s*;+\s*|\s*;+\s*$//g" <<<";$cmd;" )"
@@ -199,10 +265,12 @@ else
       eval "$cmd"
     done
   }
+
   RuntimeDeclares+=( ___prompt_commands ___prompt_PROMPT_COMMAND )
 
 
-  # Post: PostCommands
+  # PostCommands
+  # These are run before a prompt is printed to the terminal.
   for cmd in "${PostCommands[@]}"; do
     if ! printf '%s\0' "${___prompt_PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
       ___prompt_PROMPT_COMMAND+=( "$cmd" )
@@ -211,11 +279,14 @@ else
   unset cmd
 
 
-  # Post: PreCommands
-  trap 'if [[ "$BASH_COMMAND" != "___prompt_commands" ]]; then '"$( IFS=';' ; echo "${PreCommands[*]}" )"'; fi' DEBUG
+  # PreCommands
+  # These are run once for each user command.
+  # NOTE: This trap is not triggered if user press enter on an empty prompt.
+  trap 'if [[ "$BASH_COMMAND" != "___prompt_commands" ]] ; then '"$( IFS=';' ; echo "${PreCommands[*]}" )"' ; fi' DEBUG
 
 
-  # Post: Define a prompt deactivation function
+  # Define prompt deactivation function
+  # Run this manually to reset everything that was done in this script file.
   eval '
   function ___prompt_deactivate() {
     # Set Prompt
@@ -244,8 +315,9 @@ else
   alias ___prompt_deactivate='trap - DEBUG ; unalias ___prompt_deactivate ; ___prompt_deactivate'
 
 
-  # Post: Cleanup
+  # Cleanup
   unset "${ScriptDeclares[@]}"
+  unset ScriptDeclares
 
 
 fi
