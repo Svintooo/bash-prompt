@@ -1,0 +1,168 @@
+#
+# Bash prompt
+#
+
+
+# Require Bash >= 5.2
+if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2) )); then
+
+
+  : # Do nothing
+
+
+# Custom Prompt
+elif false; then
+
+
+  # Cleanup default prompt and enable custom prompt
+  declare -F ___prompt_deactivate >/dev/null && ___prompt_deactivate
+  eval "$(oh-my-posh init bash --config $HOME/.cache/oh-my-posh/themes/peru.omp.json)"
+
+
+# Default Prompt
+else
+
+
+  # Array of variables to be unset at script end
+  declare -a Variables=( Variables )
+
+
+  # Make sure PROMPT_COMMAND is an array
+  if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" != "declare -a"* ]]; then
+    declare -a PROMPT_COMMAND=( "$PROMPT_COMMAND" )
+    [[ -n "${PROMPT_COMMAND[0]}" ]] || PROMPT_COMMAND=()
+  fi
+
+
+  # Define control codes
+  # https://gist.github.com/ConnerWill/d4b6c776b509add763e17f9f113fd25b
+  declare Esc='\033'                                       # Same as '\e'
+  declare CursorSave="${Esc}[s"  CursorRestore="${Esc}[u"  # Cursor Position
+  declare HideStart='\['         HideEnd='\]'              # Hide non-printing chars, prevent cursor b0rk
+  declare CmdStop="${Esc}"'\\'
+  declare CmdTitle="${Esc}]0;"                             # Set Window/Tab titlebar text
+  declare OSCPromptStart="${Esc}]133;A${CmdStop}"      #TODO /etc/profile.d/vte-2.91.sh
+  declare OSCPromptEnd="${Esc}]133;B${CmdStop}"        #TODO /etc/profile.d/vte-2.91.sh
+  declare OSCReportRetval="${Esc}]133;D\$?${CmdStop}"  #TODO /etc/profile.d/vte-2.91.sh
+  Variables+=( Esc CursorSave CursorRestore HideStart HideEnd CmdStop CmdTitle OSCPromptStart OSCPromptEnd OSCReportRetval )
+
+  if [[ "$TERM" =~ ^xterm-color$|.*-256color$ ]]; then
+    declare  Reset="${Esc}[0;00m"
+    declare  Black="${Esc}[0;30m"    DarkGrey="${Esc}[1;30m"
+    declare    Red="${Esc}[0;31m"    LightRed="${Esc}[1;31m"
+    declare  Green="${Esc}[0;32m"  LightGreen="${Esc}[1;32m"
+    declare  Brown="${Esc}[0;33m"      Yellow="${Esc}[1;33m"
+    declare   Blue="${Esc}[0;34m"   LightBlue="${Esc}[1;34m"
+    declare Purple="${Esc}[0;35m" LightPurple="${Esc}[1;35m"
+    declare   Cyan="${Esc}[0;36m"   LightCyan="${Esc}[1;36m"
+    declare   Grey="${Esc}[0;37m"       White="${Esc}[1;37m"
+
+    colors=(
+      Reset
+      Black    Red      Green      Brown  Blue      Purple      Cyan      Grey
+      DarkGrey LightRed LightGreen Yellow LightBlue LightPurple LightCyan White
+    )
+    for color in "${colors[@]}" ; do
+      declare "H${color}"="${HideStart}${!color}${HideEnd}"  # declare hidden version of each color
+      Variables+=( "${color}" "H${color}" )
+    done
+    unset color colors
+  fi
+
+
+  # NOTES
+  #
+  # - Any code $(...) run inside PS1 needs to preserve exit code $?.
+  #   Example: $(r=$? ; ... ; exit $r)
+  #     Test: ( exit 1 )
+  #           echo "This should be 1: $?"
+  #
+  # - Resetting cursor position using carriage return (\r) is bad.
+  #   It risks hiding command outputs that do not end with a newline (\n).
+  #     Test: echo -n 'this should be visible'
+  #
+  # - Prevent executing malicious code. Never do integer operations on
+  #   user controlled variables.
+  #     Dangerous: (( var += 1 )), $(( var - 1 )), [[ "$var" -eq 1 ]] 
+  #     Safe:      [[ "$var" == 1 ]], [[ "$var" > 0 ]], [[ -z "$var" ]]
+  #     Example: var='PATH=0'
+  #              (( var + 1 ))
+  #              echo "$PATH"
+  #     Example: var='arr[$(echo "U r h4cked" > HACKED.TXT)]'
+  #              (( var + 1 ))
+  #              cat HACKED.TXT
+  #
+  # - Adding a right aligned prompt in Bash is a hack and will always behave
+  #   strangely. The prompt in this script tries to only let tolerable
+  #   strangenesses to occur.
+
+
+  # Set Prompt
+  declare TimeStamp="${HYellow}"'$(r=$? ; date +"[%Y-%m-%dT%H:%M:%S%:z]" ; exit $r)'"${HReset}"
+  declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
+  declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
+  declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
+  declare UserColor="$( [[ "$USER" == root ]] && echo "$HRed" || echo "$HGreen" )"
+  declare UserHost="${UserColor}"'\u@\h'"${HReset}"
+  declare PWDFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
+  Variables+=( TimeStamp BeatTime ShellLevel ExitCode UserColor UserHost PWDFolder )
+  PS1="${BeatTime}${UserHost}:${PWDFolder}${ShellLevel}\\$ "
+
+
+  # Set titlebar
+  if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
+    # Set default title
+    PS1="${HideStart}${CmdTitle}\u@\h:\w${CmdStop}${HideEnd}${PS1}"
+
+    # Set title to the command being executed
+    # IMPORTANT: Prevent printing eventual control codes inside BASH_COMMAND
+    eval '
+    ___prompt_title() {
+      echo -ne '"'${CmdTitle}'"'
+      echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
+      echo -ne '"'${CmdStop}'"'
+    }'
+    trap "___prompt_title" DEBUG
+  fi
+
+
+  # Set Right Prompt
+  eval '
+  ___prompt_right() {
+    local r="$?" ; [[ "$r" == "0" ]] && r="" || r="${r} "
+    #local timestamp="$(date +"%Y-%m-%d %H:%M:%S %:z")"
+    #local rprompt='"'${Red}'"'"${r}"'"'${Yellow}'"'"${timestamp}"'"'${Reset}'"'
+    #local rprompt_nocolor="${r}${timestamp}"
+    local rprompt='"'${Red}'"'"${r}"'"'${Blue}'"'"${PWD}"'"'${Reset}'"'
+    local rprompt_nocolor="${r}${PWD}"
+    local cursor_save="\\e[s"  move_right="\\e[${COLUMNS:-$(tput cols)}C"
+    local cursor_load="\\e[u"  move_left="\\e[$(( ${#rprompt_nocolor} - 1 ))D"
+    printf "${cursor_save}${move_right}${move_left}${rprompt}${cursor_load}"
+  }'
+  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzx "___prompt_right"; then
+    PROMPT_COMMAND+=( "___prompt_right" )
+  fi
+
+
+  # Define a prompt deactivation function
+  eval '
+  ___prompt_deactivate() {
+    PS1='\''\u@\h:\w$ '\''
+    printf '"'${CmdTitle}${USER}@${HOSTNAME}${CmdStop}'"'
+    local cmd cmds=( "${PROMPT_COMMAND[@]}" ) ; PROMPT_COMMAND=()
+    for cmd in "${cmds[@]}"; do
+      [[ "$cmd" == "___prompt_right" ]] || PROMPT_COMMAND+=( "$cmd" )
+    done
+    unset -f ___prompt_title
+    unset -f ___prompt_right
+    unset -f "$FUNCNAME"
+  }'
+  # Deleting the DEBUG trap cannot be done inside a function
+  alias ___prompt_deactivate='trap - DEBUG ; unalias ___prompt_deactivate ; ___prompt_deactivate'
+
+
+  # Cleanup
+  unset "${Variables[@]}"
+
+
+fi
