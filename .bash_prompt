@@ -48,7 +48,7 @@ else
 
   # Table of Content
   #  1. Init
-  #  2. Prompt (your code goes here)
+  #  2. Prompt
   #  3. Post
 
 
@@ -295,6 +295,11 @@ else
       declare -g PROMPT_COMMAND="$FUNCNAME"
     fi
 
+    # Make sure never to call itself
+    if printf '%s\0' "${___prompt_PROMPT_COMMAND[@]}" | grep -q -zxF "$FUNCNAME"; then
+      mapfile -d '' -t ___prompt_PROMPT_COMMAND < <( printf '%s\0' "${___prompt_PROMPT_COMMAND[@]}" | grep -v -zxF "$FUNCNAME" )
+    fi
+
     # Run prompt commands
     for cmd in "${___prompt_PROMPT_COMMAND[@]}"; do
       eval "$cmd"
@@ -323,13 +328,13 @@ else
   #       Example (semicolon): echo 1; echo 2; echo 3
   # NOTE: Trap is also triggered for every command in PostCommands.
   #       This is mitigated by the if clause.
-  #       Because of this it is important that ___prompt_commands is the only command in PROMPT_COMMAND.
-  trap "$(
-    echo   # Extra `echo` added because it makes the trap look better when running `trap -p DEBUG`
-    echo   'if [[ "$BASH_COMMAND" != "___prompt_commands" ]]; then'
-    printf '  %s\n' "${PreCommands[@]}"
-    echo   'fi'
-  )" DEBUG
+  #       Because of this, it is important that ___prompt_commands is the only command in PROMPT_COMMAND.
+  # NOTE: $'\n' only exists to make the trap look prettier when running 'trap -p DEBUG'.
+  trap $'\n'"$(
+    echo   '  if [[ "$BASH_COMMAND" != "___prompt_commands" ]]; then'
+    printf '    %s\n' "${PreCommands[@]}"
+    echo   '  fi'
+  )"$'\n' DEBUG
 
 
   # Define prompt deactivation function
