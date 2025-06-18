@@ -3,15 +3,8 @@
 #
 
 
-# Require Bash >= 5.2
-if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 2) )); then
-
-
-  : # Do nothing
-
-
 # Custom Prompt
-elif false; then
+if false; then
 
 
   # Cleanup default prompt and enable custom prompt
@@ -19,12 +12,14 @@ elif false; then
   eval "$(oh-my-posh init bash --config $HOME/.cache/oh-my-posh/themes/peru.omp.json)"
 
 
-# Default Prompt
-else
+# Default Prompt (requires bash >= 5.2)
+elif (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 2) )); then
 
 
   # Array of variables to be unset at script end
-  declare -a Variables=( Variables )
+  declare -a PromptCommands=()
+  declare -a DebugTraps=()
+  declare -a Variables=( Variables PromptCommands DebugTraps )
 
 
   # Make sure PROMPT_COMMAND is an array
@@ -100,16 +95,41 @@ else
   # Helper functions
   ___prompt_right_aligned() {
     local escseq='('$'\x01''?'$'\e''([@A-Z\[\\^_]|\])[0-9:;<=>?]*[-!"#$%&()*,./'"'"']*([@A-Z\[\\^_`a-z{|}~]|\]))'$'\x02''?'
-    local str="$( echo "${1@P}" | sed -E "s/$escseq//g" )"
-    local width="${#str}"
+    local str_no_escseq="$( echo "${1@P}" | sed -E "s/$escseq//g" )"
+    local width="${#str_no_escseq}"
     local cols="$( [[ "$COLUMNS" ]] && echo "$COLUMNS" || tput cols )"
-    printf "%$((cols-width))s"'%s' "" "$1"
+    local cursor_save="\\e[s"  move_right="\\e[${cols}C"
+    local cursor_load="\\e[u"  move_left="\\e[$((width-1))D"
+    if [[ "$TERM" =~ ^(xterm|rxvt) ]]; then
+      printf "${cursor_save}${move_right}${move_left}%s${cursor_load}" "$1"
+    else
+      printf '\n'"%$((cols-width))s"'%s''\r' "" "$1"
+    fi
   }
+
+  ___prompt_set_cmd_ran() {
+    if [[ -z "$___prompt_PS1" ]]; then
+      return 0
+    elif [[ "$1" == "DEBUG" ]] && ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$BASH_COMMAND"; then
+      PS1="$___prompt_PS1"
+      ___prompt_cmd_ran="true"
+    elif [[ "$1" != "DEBUG" ]]; then
+      [[ -n "$___prompt_cmd_ran" ]] && unset -v ___prompt_cmd_ran || PS1="${___prompt_PS1##*\n}"
+    fi
+  }
+
+  trap '___prompt_set_cmd_ran DEBUG;'  DEBUG
+  DebugTraps+=( "___prompt_set_cmd_ran DEBUG" )
+  PromptCommands+=( "___prompt_set_cmd_ran" )
+  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF '___prompt_set_cmd_ran'; then
+    PROMPT_COMMAND+=( "___prompt_set_cmd_ran" )
+  fi
 
 
   # Set Prompt
   declare TimeStamp="${HYellow}"'$(r=$? ; date +"%Y-%m-%d %H:%M:%S %:z" ; exit $r)'"${HReset}"
   declare RetCode="${HRed}"'$(r=$? ; [[ "$r" == "0" ]] || echo "$r" ; exit $r)'"${HReset}"
+  declare NoNewline='$(r=$?; printf "\033[6n" > /dev/tty ; IFS=";" read -r -d"R" _ col < /dev/tty ;  ;exit $r)' #WiP
   declare BeatTime="${HYellow}"'[$(r=$? ; date +"%Y-%m-%d" ; exit $r)$(r=$? ; date -u +"%s" | awk "{printf \"@%.2f\", (((\\$1+3600)%86400)/86.4)}" ; exit $r)]'"${HReset}"
   declare ShellLevel="$( [[ "$SHLVL" != "1" ]] && echo "[$SHLVL]" )"
   declare ExitCode='$(r=$? ; [[ $r == 0 ]] || echo ":'"${HBrown}"'${r}'"${HReset}"'" ; exit ${r})'
@@ -118,10 +138,11 @@ else
   declare PwdFolder="${HBlue}"'$(r=$? ; pwd="${PWD/$HOME/\~}" ; pwd="${pwd##*/}"; echo "${pwd}/" ; exit $r)'"${HReset}"
   declare Pwd="${HBlue}"'\w'"${HReset}"
   Variables+=( TimeStamp RetCode BeatTime ShellLevel ExitCode UserColor UserHost PwdFolder )
-  PS1='\n'
-  PS1+='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)\r'
+  PS1='$(r=$?;(exit $r); ___prompt_right_aligned "'"${RetCode} ${TimeStamp}"'" ;exit $r)'
   PS1+="${UserHost}:${Pwd}${ShellLevel}"'\n'
   PS1+='\$ '
+  ___prompt_PS1="$PS1"
+  #
   #PS1="${BeatTime}${UserHost}:${PwdFolder}${ShellLevel}\\$ "
 
 
@@ -138,7 +159,7 @@ else
       echo -n "${BASH_COMMAND//[[:cntrl:]]/^?}"
       echo -ne '"'${CmdStop}'"'
     }'
-    trap "___prompt_title" DEBUG
+    #trap "___prompt_title" DEBUG
   fi
 
 
@@ -171,6 +192,8 @@ else
     for cmd in "${cmds[@]}"; do
       [[ "$cmd" == "___prompt_right" ]] || PROMPT_COMMAND+=( "$cmd" )
     done
+    unset -v ___prompt_PS1
+    unset -f ___prompt_set_cmd_ran
     unset -f ___prompt_title
     unset -f ___prompt_right
     unset -f ___prompt_right_aligned
@@ -181,7 +204,13 @@ else
 
 
   # Cleanup
-  unset "${Variables[@]}"
+  #trap "$(IFS=';' ; echo "${DebugTraps[*]}")" DEBUG
+  #for cmd in "${PromptCommands[@]}"; do
+  #  if ! printf '%s\0' "${PROMPT_COMMAND[@]}" | grep -qzxF "$cmd"; then
+  #    PROMPT_COMMAND+=( "$cmd" )
+  #  fi
+  #done
+  unset cmd "${Variables[@]}"
 
 
 fi
